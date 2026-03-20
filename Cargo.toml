@@ -1,0 +1,27 @@
+[package]
+name = "zk-smart-meter"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# Core math and traits
+ark-ff = "0.4.0"
+ark-ec = "0.4.0"
+ark-std = "0.4.0"
+
+# The specific curve we are using
+ark-bls12-381 = "0.4.0"
+
+# R1CS constraint system and standard gadgets
+ark-relations = "0.4.0"
+ark-r1cs-std = "0.4.0"
+
+# The Groth16 Prover/Verifier
+ark-groth16 = "0.4.0"
+ark-snark = "0.4.0"
+
+# Randomness
+rand = "0.8"
+
+#Embedded curve (Jubjub)
+ark-ed-on-bls12-381 = {version = "0.4.0", features = ["r1cs"]}
