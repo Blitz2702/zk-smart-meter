@@ -1,3 +1,8 @@
+use std::{
+    io::{Write, stdin, stdout},
+    panic,
+};
+
 use ark_bls12_381::{Bls12_381, Fr};
 use ark_ff::PrimeField;
 use ark_groth16::Groth16;
@@ -18,18 +23,53 @@ zk-smart-meter/
 │   └── native.rs       # Cleanly separate your native Jubjub math here.
 */
 
+fn get_user_input(prompt: &str) -> u64 {
+    let mut input = String::new();
+    loop {
+        print!("{}", prompt);
+        stdout().flush().unwrap();
+        input.clear();
+        stdin().read_line(&mut input).expect("Read Failed!");
+
+        if let Ok(num) = input.trim().parse::<u64>() {
+            return num;
+        }
+        println!("Invalid Input! Please Try Again.");
+    }
+}
+
 #[allow(non_snake_case)]
 fn main() {
+    /*--------------------------------
+    CLI COSMETICS FOR USER EXPERIENCE
+    --------------------------------*/
+    println!("==============================================");
+    println!("  🔒 ZERO-KNOWLEDGE SMART METER PROTOCOL 🔒");
+    println!("==============================================");
+    println!("Grid Policy: Maximum monthly usage is 375 kWh.");
+    println!("----------------------------------------------");
+    //=========================================================================================================================================================================
+
+    /*---------------
+    GLOBAL VARIABLES
+    ---------------*/
     let mut rnd_main = OsRng;
+    let measurement_data = get_user_input("[Smart Meter] Enter your actual usage (kWh): ");
+    //=========================================================================================================================================================================
+
     /*------------------------------------
     THE PRECOMPUTE OF PEDERSON COMMITMENT
     ------------------------------------*/
+    println!("[+] Booting Smart Meter...");
     let (g_native, h_native, f_native, C_Data_native, secret_pk, measurement, secret_r) =
-        initiate_native_calculation();
+        initiate_native_calculation(measurement_data);
+    //=========================================================================================================================================================================
 
     /*----------------
     THE TRUSTED SETUP
     ----------------*/
+
+    println!("[+] Running Trusted Setup (Generating Proving & Verifying Keys)...");
     let dummy_circuit = ZKSmartMeterContract {
         g: g_native,
         h: h_native,
@@ -44,6 +84,7 @@ fn main() {
     let (pk_circuit, vk_circuit) =
         Groth16::<Bls12_381>::circuit_specific_setup(dummy_circuit, &mut rnd_main)
             .expect("Circuit Setup Failed!");
+    //=========================================================================================================================================================================
 
     /*---------------
     THE PROVER'S RUN
@@ -70,20 +111,58 @@ fn main() {
         r: Some(secret_r_bls),
     };
 
-    let proof = Groth16::<Bls12_381>::prove(&pk_circuit, valid_circuit, &mut rnd_main)
-        .expect("Proof Generation Failed!");
+    println!("[+] Prover: Compressing matrix into Zero-Knowledge Proof...");
+    println!(
+        "    (Note: If data is invalid, the Arkworks Framework will emit a constraint trace warning and abort.)\n"
+    );
+
+    let og_hook = panic::take_hook();
+    panic::set_hook(Box::new(|_| {}));
+
+    let proof_result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        Groth16::<Bls12_381>::prove(&pk_circuit, valid_circuit, &mut rnd_main).unwrap()
+    }));
+    panic::set_hook(og_hook);
+
+    let proof = match proof_result {
+        Ok(p) => {
+            println!("\tProof generated successfully!");
+            p
+        }
+        Err(_) => {
+            println!("[!] FATAL: Proof Generation Failed!");
+            println!(
+                "[!] Proof Generation Failed! The matrix detected a constraint violation (Data > Threshold)."
+            );
+            return;
+        }
+    };
+    //=========================================================================================================================================================================
 
     /*-----------------
     THE VERIFIER'S RUN
     -----------------*/
+    println!("\n[+] Verifier: Checking the proof against the Grid Policy...");
     let pub_inputs = vec![C_Data_native.x, C_Data_native.y, threshold];
 
-    let verify_res = Groth16::<Bls12_381>::verify(&vk_circuit, &pub_inputs, &proof)
-        .expect("Proof Verification Failed!");
+    let verify_res = Groth16::<Bls12_381>::verify(&vk_circuit, &pub_inputs, &proof);
+    println!("\tNo data was revealed to the Grid.");
 
-    if verify_res {
-        println!("Measurement is under the threshold.");
-    } else {
-        println!("Measurement is over the threshold.");
+    match verify_res {
+        Ok(true) => {
+            println!("\t[*] VERIFIED: Measurement is under the threshold.");
+            println!("==============================================");
+        }
+        Ok(false) => {
+            println!("\t[!] ERROR: Cryptographic Verification Failed! Proof is invalid or forged.");
+            println!("==============================================");
+        }
+        Err(err) => {
+            println!(
+                "Structural Failure. Bad Request format or length mismatch. Error: {}",
+                err
+            );
+        }
     }
+    //=========================================================================================================================================================================
 }

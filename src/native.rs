@@ -4,7 +4,9 @@ use ark_ff::UniformRand;
 use rand::rngs::OsRng;
 
 #[allow(non_snake_case)]
-pub fn initiate_native_calculation() -> (
+pub fn initiate_native_calculation(
+    measurement_data: u64,
+) -> (
     EdwardsAffine,
     EdwardsAffine,
     EdwardsAffine,
@@ -13,6 +15,7 @@ pub fn initiate_native_calculation() -> (
     Fr,
     Fr,
 ) {
+    println!("[+] Generating local Pedersen Commitment (Hiding your data)...");
     let mut rnd = OsRng;
     let g_native = EdwardsAffine::generator();
 
@@ -23,7 +26,7 @@ pub fn initiate_native_calculation() -> (
     let f_native = (g_native * f_native_scalar).into_affine();
 
     let secret_pk = Fr::from(3154u64);
-    let data = Fr::from(298u64);
+    let data = Fr::from(measurement_data);
     let secret_r = Fr::rand(&mut rnd);
 
     let C_Data_native =
