@@ -25,7 +25,7 @@ pub fn initiate_native_calculation(
     let f_native_scalar = Fr::rand(&mut rnd);
     let f_native = (g_native * f_native_scalar).into_affine();
 
-    let secret_pk = Fr::from(3154u64);
+    let secret_pk = Fr::rand(&mut rnd);
     let data = Fr::from(measurement_data);
     let secret_r = Fr::rand(&mut rnd);
 

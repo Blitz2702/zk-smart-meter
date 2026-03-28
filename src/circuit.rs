@@ -67,8 +67,9 @@ impl ConstraintSynthesizer<Fr> for ZKSmartMeterContract {
 mod tests {
     use super::*;
     use crate::native::initiate_native_calculation;
-    use ark_bls12_381::Fr;
+    use ark_bls12_381::{Bls12_381, Fr};
     use ark_ff::PrimeField;
+    use ark_groth16::Groth16;
     use ark_relations::r1cs::ConstraintSystem;
     use ark_std::UniformRand;
     use rand::rngs::OsRng;
@@ -163,5 +164,65 @@ mod tests {
                 random_m, random_t
             );
         }
+    }
+
+    #[test]
+    fn test_zero_measurement() {
+        let circuit = build_test_circuit(0, 100);
+        let cs = ConstraintSystem::<Fr>::new_ref();
+        circuit.generate_constraints(cs.clone()).unwrap();
+
+        assert!(
+            cs.is_satisfied().unwrap(),
+            "[!] Zero measurement (M=0) was incorrectly rejected"
+        );
+    }
+
+    #[test]
+    fn test_max_u64_measurement() {
+        let circuit = build_test_circuit(u64::MAX, 375);
+        let cs = ConstraintSystem::<Fr>::new_ref();
+
+        let result = circuit.generate_constraints(cs.clone());
+        if result.is_ok() {
+            assert!(
+                !cs.is_satisfied().unwrap(),
+                "[!] u64::MAX measurement bypassed the policy threshold!"
+            );
+        }
+    }
+
+    #[test]
+    fn test_proof_serialization_roundtrip() {
+        use ark_groth16::Proof;
+        use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+        use ark_snark::SNARK;
+
+        // 1. Setup
+        let master_circuit = build_test_circuit(200, 300);
+        let mut rng = OsRng;
+        let (pk, vk) =
+            Groth16::<Bls12_381>::circuit_specific_setup(master_circuit.clone(), &mut rng).unwrap();
+
+        // 2. Prove
+        let proof = Groth16::<Bls12_381>::prove(&pk, master_circuit.clone(), &mut rng).unwrap();
+
+        // 3. Serialize (Network Transmission)
+        let mut proof_bytes = Vec::new();
+        proof.serialize_compressed(&mut proof_bytes).unwrap();
+
+        // 4. Deserialize (Payload Received)
+        let des_proof = Proof::<Bls12_381>::deserialize_compressed(&proof_bytes[..]).unwrap();
+
+        // 5. Verify
+        let pub_inp = vec![
+            master_circuit.C_data.unwrap().x,
+            master_circuit.C_data.unwrap().y,
+            master_circuit.T.unwrap(),
+        ];
+
+        let is_valid = Groth16::<Bls12_381>::verify(&vk, &pub_inp, &des_proof).unwrap();
+
+        assert!(is_valid, "[!]Serialization roundtrip corrupted the proof");
     }
 }

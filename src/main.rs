@@ -2,11 +2,13 @@ use ark_bls12_381::{Bls12_381, Fr};
 use ark_ed_on_bls12_381::EdwardsAffine;
 // use ark_ec::AffineRepr;
 use ark_ff::PrimeField;
-use ark_groth16::Groth16;
+use ark_groth16::{Groth16, Proof};
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystem, SynthesisError};
-use ark_serialize::{CanonicalSerialize, Compress};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress};
 use ark_snark::SNARK;
+use rand::Rng;
 use rand::rngs::OsRng;
+use std::env;
 use std::error::Error;
 use std::fmt::Display;
 use std::io::{Write, stdin, stdout};
@@ -29,6 +31,7 @@ enum SmartMeterError {
     CircuitSetupFailed(SynthesisError),
     InvalidInput(String),
     InvalidCurvePoint(String),
+    DeserializationError(String),
 }
 impl Display for SmartMeterError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -43,6 +46,9 @@ impl Display for SmartMeterError {
             }
             SmartMeterError::InvalidCurvePoint(msg) => write!(f, "Invalid Curve Point: {}", msg),
             SmartMeterError::VerificationError(err) => write!(f, "Verification Error: {}", err),
+            SmartMeterError::DeserializationError(msg) => {
+                write!(f, "Proof Deserialization Failed: {}", msg)
+            }
         }
     }
 }
@@ -71,7 +77,7 @@ fn build_circuit(
     h: EdwardsAffine,
     f: EdwardsAffine,
     c_data: EdwardsAffine,
-    T: Fr,
+    T: u64,
     pk: Fr,
     M: Fr,
     r: Fr,
@@ -81,7 +87,7 @@ fn build_circuit(
         h,
         f,
         C_data: Some(c_data),
-        T: Some(T),
+        T: Some(Fr::from(T)),
         pk: Some(pk),
         M: Some(M),
         r: Some(r),
@@ -92,14 +98,14 @@ fn build_circuit(
 
 #[allow(non_snake_case)]
 fn main() -> Result<(), SmartMeterError> {
+    let args: Vec<String> = env::args().collect();
+    let mitm_demo_run = args.contains(&String::from("--attack-demo"));
     /*--------------------------------
     CLI COSMETICS FOR USER EXPERIENCE
     --------------------------------*/
     println!("==============================================");
     println!("  🔒 ZERO-KNOWLEDGE SMART METER PROTOCOL 🔒");
     println!("==============================================");
-    println!("Grid Policy: Maximum monthly usage is 375 kWh.");
-    println!("----------------------------------------------");
     //=========================================================================================================================================================================
 
     /*---------------
@@ -154,22 +160,31 @@ fn main() -> Result<(), SmartMeterError> {
     let secret_r_bls = Fr::from_bigint(r_bytes)
         .ok_or_else(|| SmartMeterError::InvalidInput("Invalid Blinder (r)".to_string()))?;
 
-    let valid_circuit = ZKSmartMeterContract {
-        g: g_native,
-        h: h_native,
-        f: f_native,
-        C_data: Some(C_Data_native),
-        T: Some(Fr::from(threshold_data)),
-        pk: Some(secret_pk_bls),
-        M: Some(measurement_bls),
-        r: Some(secret_r_bls),
-    };
+    let valid_circuit = build_circuit(
+        g_native,
+        h_native,
+        f_native,
+        C_Data_native,
+        threshold_data,
+        secret_pk_bls,
+        measurement_bls,
+        secret_r_bls,
+    );
+    let debug_circuit = build_circuit(
+        g_native,
+        h_native,
+        f_native,
+        C_Data_native,
+        threshold_data,
+        secret_pk_bls,
+        measurement_bls,
+        secret_r_bls,
+    );
 
     // Pre Proof Computation Constraint Sanity Check
     println!("[+] Prover: Performing pre-compute constraint check...");
     let debug_cs = ConstraintSystem::<Fr>::new_ref();
-    valid_circuit
-        .clone()
+    debug_circuit
         .generate_constraints(debug_cs.clone())
         .map_err(SmartMeterError::ProofGenerationFailed)?;
 
@@ -190,12 +205,12 @@ fn main() -> Result<(), SmartMeterError> {
     println!("[+] Prover: Compressing matrix into Zero-Knowledge Proof...");
 
     let prove_start_time = Instant::now();
-    let proof = Groth16::<Bls12_381>::prove(&pk_circuit, valid_circuit, &mut rnd_main)
+    let generated_proof = Groth16::<Bls12_381>::prove(&pk_circuit, valid_circuit, &mut rnd_main)
         .map_err(SmartMeterError::ProofGenerationFailed)?;
     let prove_end_time = prove_start_time.elapsed();
 
     let mut proof_bytes = Vec::new();
-    proof
+    generated_proof
         .serialize_compressed(&mut proof_bytes)
         .map_err(|_| SmartMeterError::InvalidInput("Seriliazation Failure".to_string()))?;
 
@@ -203,16 +218,81 @@ fn main() -> Result<(), SmartMeterError> {
     println!("\tProve time: {:.2?}", prove_end_time);
     println!(
         "\tProof size: {} bytes",
-        proof.serialized_size(Compress::Yes)
+        generated_proof.serialized_size(Compress::Yes)
     );
 
+    //=========================================================================================================================================================================
+
+    /*---------------------
+    THE NETWORK SIMULATION
+    ---------------------*/
+    println!(
+        "\n [*] Network: Transmitting {} bytes of proof to the grid for verification...",
+        proof_bytes.len()
+    );
+    //=========================================================================================================================================================================
+
+    /*------------------
+    THE MITM Simulation
+    ------------------*/
+    if mitm_demo_run {
+        println!("\n---------------MITM--SIMULATION---------------");
+        println!("\n[X] Attacker: Intercepting network payload...");
+
+        let mut byte_selector = rand::thread_rng();
+        let rand_byte = byte_selector.gen_range(10..45);
+
+        println!(
+            "\t[X] Attacker: Flipping byte {}: 0x{:02X} → 0x{:02X}",
+            rand_byte,
+            proof_bytes[rand_byte],
+            proof_bytes[rand_byte] ^ 0xFF
+        );
+
+        let mut intercepted_proof_bytes = proof_bytes.clone();
+        intercepted_proof_bytes[rand_byte] ^= 0xFF;
+
+        println!("[+] Grid Verifier: Analyzing intercepted payload for cryptographic soundness...");
+        let tampered_proof_result =
+            Proof::<Bls12_381>::deserialize_compressed(&intercepted_proof_bytes[..]);
+
+        let proof_check_start_tampered = Instant::now();
+        match tampered_proof_result {
+            Ok(tampered_proof) => {
+                let pub_inputs = vec![C_Data_native.x, C_Data_native.y, Fr::from(threshold_data)];
+
+                let is_valid =
+                    Groth16::<Bls12_381>::verify(&vk_circuit, &pub_inputs, &tampered_proof)
+                        .unwrap_or(false);
+
+                if !is_valid {
+                    println!(
+                        "[+] Success! Soundness Verified: Tampered proof was mathematically rejected by the pairing check."
+                    );
+                }
+            }
+            Err(_) => {
+                println!(
+                    "[+] Success! Soundness Verified: Tampered Proof failed to deserialize due to Corrupt Geometry"
+                );
+            }
+        }
+        let proof_check_end_tampered = proof_check_start_tampered.elapsed();
+        println!(
+            "    Proof Check Completed in {:.2?}",
+            proof_check_end_tampered
+        );
+        println!("\n----------------------------------------------");
+    } else {
+        println!("[#] Run with --attack-demo to simulate a MITM tampering attack");
+    }
     //=========================================================================================================================================================================
 
     /*-----------------
     THE VERIFIER'S RUN
     -----------------*/
-    println!("\n[+] Verifier: Checking the proof against the Grid Policy...");
-
+    println!("\n[+] Verifier: Checking the proof received against the Grid Policy...");
+    let received_proof_bytes = proof_bytes;
     // The Public Input Check
     if !C_Data_native.is_on_curve() || !C_Data_native.is_in_correct_subgroup_assuming_on_curve() {
         println!("\t[!] ERROR: Incorrect commitment point! Commitment is not on the Jubjub curve.");
@@ -224,15 +304,17 @@ fn main() -> Result<(), SmartMeterError> {
 
     let pub_inputs = vec![C_Data_native.x, C_Data_native.y, Fr::from(threshold_data)];
 
-    let verify_res = Groth16::<Bls12_381>::verify(&vk_circuit, &pub_inputs, &proof)
+    let deserialized_proof = Proof::<Bls12_381>::deserialize_compressed(&received_proof_bytes[..])
+        .map_err(|_| SmartMeterError::DeserializationError("Proof bytes corrupted".to_string()))?;
+
+    let verify_res = Groth16::<Bls12_381>::verify(&vk_circuit, &pub_inputs, &deserialized_proof)
         .map_err(SmartMeterError::VerificationError)?;
-    println!("\tNo data was revealed to the Grid.");
 
     if verify_res {
-        println!("\t[*] VERIFIED: Measurement is under the threshold.");
+        println!("[*] VERIFIED: Measurement is under the threshold.");
         println!("==============================================");
     } else {
-        println!("\t[!] ERROR: Proof Verification Failed! Proof is EITHER invalid OR forged.");
+        println!("[!] ERROR: Proof Verification Failed! Proof is EITHER invalid OR forged.");
         println!("==============================================");
     }
     Ok(())
