@@ -5,6 +5,7 @@ use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, Result, Sy
 use std::cmp::Ordering;
 
 #[allow(non_snake_case)]
+#[derive(Clone)]
 pub struct ZKSmartMeterContract {
     pub g: EdwardsAffine,              // Generator for pk
     pub h: EdwardsAffine,              // Generator for M
@@ -58,5 +59,54 @@ impl ConstraintSynthesizer<Fr> for ZKSmartMeterContract {
         final_c_data.enforce_equal(&C_Data)?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{circuit::ZKSmartMeterContract, native::initiate_native_calculation};
+    use ark_bls12_381::Fr;
+    use ark_ff::PrimeField;
+    use ark_relations::r1cs::ConstraintSystem;
+
+    /*----------------
+    Create Tests Here
+    ----------------*/
+    fn build_test_circuit(measurement: u64, threshold: u64) -> ZKSmartMeterContract {
+        let (g, h, f, c_data, pk, m, r) = initiate_native_calculation(measurement);
+
+        let pk_bls = Fr::from_bigint(pk.into_bigint()).unwrap();
+        let m_bls = Fr::from_bigint(m.into_bigint()).unwrap();
+        let r_bls = Fr::from_bigint(r.into_bigint()).unwrap();
+
+        ZKSmartMeterContract {
+            g,
+            h,
+            f,
+            C_data: Some(c_data),
+            T: Some(Fr::from(threshold)),
+            pk: Some(pk_bls),
+            M: Some(m_bls),
+            r: Some(r_bls),
+        }
+    }
+
+    #[test]
+    fn test_honest_meter_passes() {
+        let valid_circuit = build_test_circuit(333u64, 444u64);
+        let cs = ConstraintSystem::<Fr>::new_ref();
+        valid_circuit.generate_constraints(cs.clone()).unwrap();
+
+        assert!(cs.is_satisfied().unwrap());
+    }
+
+    #[test]
+    fn test_cheating_meter_fails() {
+        let invalid_circuit = build_test_circuit(333u64, 123u64);
+        let cs = ConstraintSystem::<Fr>::new_ref();
+        invalid_circuit.generate_constraints(cs.clone()).unwrap();
+
+        assert!(!cs.is_satisfied().unwrap());
     }
 }
