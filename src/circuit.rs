@@ -61,18 +61,19 @@ impl ConstraintSynthesizer<Fr> for ZKSmartMeterContract {
         Ok(())
     }
 }
+//=========================================================================================================================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{circuit::ZKSmartMeterContract, native::initiate_native_calculation};
+    use crate::native::initiate_native_calculation;
     use ark_bls12_381::Fr;
     use ark_ff::PrimeField;
     use ark_relations::r1cs::ConstraintSystem;
+    use ark_std::UniformRand;
+    use rand::rngs::OsRng;
 
-    /*----------------
-    Create Tests Here
-    ----------------*/
+    // Helper Fucntion to Build the Circuit
     fn build_test_circuit(measurement: u64, threshold: u64) -> ZKSmartMeterContract {
         let (g, h, f, c_data, pk, m, r) = initiate_native_calculation(measurement);
 
@@ -93,20 +94,74 @@ mod tests {
     }
 
     #[test]
-    fn test_honest_meter_passes() {
+    fn test_honest_meter_pass() {
         let valid_circuit = build_test_circuit(333u64, 444u64);
         let cs = ConstraintSystem::<Fr>::new_ref();
         valid_circuit.generate_constraints(cs.clone()).unwrap();
 
-        assert!(cs.is_satisfied().unwrap());
+        assert!(cs.is_satisfied().unwrap(), "[!] Honest meter was rejected");
     }
 
     #[test]
-    fn test_cheating_meter_fails() {
+    fn test_cheating_meter_fail() {
         let invalid_circuit = build_test_circuit(333u64, 123u64);
         let cs = ConstraintSystem::<Fr>::new_ref();
         invalid_circuit.generate_constraints(cs.clone()).unwrap();
 
-        assert!(!cs.is_satisfied().unwrap());
+        assert!(
+            !cs.is_satisfied().unwrap(),
+            "[!] Cheating meter was accepted"
+        );
+    }
+
+    #[test]
+    fn test_boundary_condition_fail() {
+        let boundary_circuit = build_test_circuit(111u64, 111u64);
+        let cs = ConstraintSystem::<Fr>::new_ref();
+        boundary_circuit.generate_constraints(cs.clone()).unwrap();
+
+        assert!(
+            !cs.is_satisfied().unwrap(),
+            "[!] Boundary condition values bypassed the constraints"
+        );
+    }
+
+    #[test]
+    fn test_blinder_forgery_fail() {
+        let mut forged_circuit = build_test_circuit(254u64, 366u64);
+        let cs = ConstraintSystem::<Fr>::new_ref();
+
+        forged_circuit.r = Some(Fr::rand(&mut OsRng));
+        forged_circuit.generate_constraints(cs.clone()).unwrap();
+
+        assert!(
+            !cs.is_satisfied().unwrap(),
+            "[!] Forged Blinder (r) accepted"
+        )
+    }
+
+    #[test]
+    fn test_fuzzy_values() {
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+
+        for _ in 0..10 {
+            let random_t: u64 = rng.gen_range(0..1000);
+            let random_m: u64 = rng.gen_range(1..1000);
+
+            let circuit = build_test_circuit(random_m, random_t);
+            let cs = ConstraintSystem::<Fr>::new_ref();
+
+            circuit.generate_constraints(cs.clone()).unwrap();
+
+            let is_satisfied = cs.is_satisfied().unwrap();
+            let native_truth = random_m < random_t;
+
+            assert_eq!(
+                is_satisfied, native_truth,
+                "Incorrect value combination accepted. M: {}, T:{}",
+                random_m, random_t
+            );
+        }
     }
 }

@@ -1,10 +1,14 @@
 use ark_bls12_381::{Bls12_381, Fr};
+use ark_ed_on_bls12_381::EdwardsAffine;
+// use ark_ec::AffineRepr;
 use ark_ff::PrimeField;
 use ark_groth16::Groth16;
-use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystem};
+use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystem, SynthesisError};
 use ark_serialize::{CanonicalSerialize, Compress};
 use ark_snark::SNARK;
 use rand::rngs::OsRng;
+use std::error::Error;
+use std::fmt::Display;
 use std::io::{Write, stdin, stdout};
 use std::time::Instant;
 
@@ -14,6 +18,37 @@ mod circuit;
 mod native;
 //=========================================================================================================================================================================
 
+/*-------------------------
+HELPER FUNCTIONS AND ENUMS
+-------------------------*/
+#[derive(Debug)]
+enum SmartMeterError {
+    ConstraintUnsatisfied(String),
+    ProofGenerationFailed(SynthesisError),
+    VerificationError(SynthesisError),
+    CircuitSetupFailed(SynthesisError),
+    InvalidInput(String),
+    InvalidCurvePoint(String),
+}
+impl Display for SmartMeterError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SmartMeterError::InvalidInput(msg) => write!(f, "Invalid Input: {}", msg),
+            SmartMeterError::CircuitSetupFailed(err) => write!(f, "Circuit Setup Failed: {}", err),
+            SmartMeterError::ConstraintUnsatisfied(gate) => {
+                write!(f, "Constraint Unsatisfied at gate: {}", gate)
+            }
+            SmartMeterError::ProofGenerationFailed(err) => {
+                write!(f, "Proof Generation Failed: {}", err)
+            }
+            SmartMeterError::InvalidCurvePoint(msg) => write!(f, "Invalid Curve Point: {}", msg),
+            SmartMeterError::VerificationError(err) => write!(f, "Verification Error: {}", err),
+        }
+    }
+}
+impl Error for SmartMeterError {}
+
+// User input helper function
 fn get_user_input(prompt: &str) -> u64 {
     let mut input = String::new();
     loop {
@@ -29,8 +64,34 @@ fn get_user_input(prompt: &str) -> u64 {
     }
 }
 
+// Circuit builder helper function
 #[allow(non_snake_case)]
-fn main() {
+fn build_circuit(
+    g: EdwardsAffine,
+    h: EdwardsAffine,
+    f: EdwardsAffine,
+    c_data: EdwardsAffine,
+    T: Fr,
+    pk: Fr,
+    M: Fr,
+    r: Fr,
+) -> ZKSmartMeterContract {
+    ZKSmartMeterContract {
+        g,
+        h,
+        f,
+        C_data: Some(c_data),
+        T: Some(T),
+        pk: Some(pk),
+        M: Some(M),
+        r: Some(r),
+    }
+}
+
+//=========================================================================================================================================================================
+
+#[allow(non_snake_case)]
+fn main() -> Result<(), SmartMeterError> {
     /*--------------------------------
     CLI COSMETICS FOR USER EXPERIENCE
     --------------------------------*/
@@ -74,7 +135,7 @@ fn main() {
 
     let (pk_circuit, vk_circuit) =
         Groth16::<Bls12_381>::circuit_specific_setup(dummy_circuit, &mut rnd_main)
-            .expect("Circuit Setup Failed!");
+            .map_err(SmartMeterError::CircuitSetupFailed)?;
     //=========================================================================================================================================================================
 
     /*---------------
@@ -82,13 +143,16 @@ fn main() {
     ---------------*/
     // Building the Valid Circuit
     let pk_bytes = secret_pk.into_bigint();
-    let secret_pk_bls = Fr::from_bigint(pk_bytes).unwrap();
+    let secret_pk_bls = Fr::from_bigint(pk_bytes)
+        .ok_or_else(|| SmartMeterError::InvalidInput("Invalid Private Key (pk)".to_string()))?;
 
     let measurement_bytes = measurement.into_bigint();
-    let measurement_bls = Fr::from_bigint(measurement_bytes).unwrap();
+    let measurement_bls = Fr::from_bigint(measurement_bytes)
+        .ok_or_else(|| SmartMeterError::InvalidInput("Invalid Measurement (M)".to_string()))?;
 
     let r_bytes = secret_r.into_bigint();
-    let secret_r_bls = Fr::from_bigint(r_bytes).unwrap();
+    let secret_r_bls = Fr::from_bigint(r_bytes)
+        .ok_or_else(|| SmartMeterError::InvalidInput("Invalid Blinder (r)".to_string()))?;
 
     let valid_circuit = ZKSmartMeterContract {
         g: g_native,
@@ -107,27 +171,33 @@ fn main() {
     valid_circuit
         .clone()
         .generate_constraints(debug_cs.clone())
-        .expect("Failed to build constraints");
+        .map_err(SmartMeterError::ProofGenerationFailed)?;
 
-    if !debug_cs.is_satisfied().unwrap() {
+    if !debug_cs.is_satisfied().unwrap_or(false) {
         println!("\n[!] FATAL: Proof Generation Aborted!");
         println!("[!] The Smart Meter data violates the Grid Policy.");
 
-        if let Some(bad_constraint) = debug_cs.which_is_unsatisfied().unwrap() {
-            println!("\t => Unsatisfied Constraint: {}", bad_constraint);
-        }
-        return;
+        let bad_constraint = debug_cs
+            .which_is_unsatisfied()
+            .unwrap_or_default()
+            .unwrap_or_else(|| "Unknow Error".to_string());
+        println!("\t => Unsatisfied Constraint: {}", bad_constraint);
+
+        return Err(SmartMeterError::ConstraintUnsatisfied(bad_constraint));
     }
 
     // Proof Computation
     println!("[+] Prover: Compressing matrix into Zero-Knowledge Proof...");
 
     let prove_start_time = Instant::now();
-    let proof = Groth16::<Bls12_381>::prove(&pk_circuit, valid_circuit, &mut rnd_main).unwrap();
+    let proof = Groth16::<Bls12_381>::prove(&pk_circuit, valid_circuit, &mut rnd_main)
+        .map_err(SmartMeterError::ProofGenerationFailed)?;
     let prove_end_time = prove_start_time.elapsed();
 
     let mut proof_bytes = Vec::new();
-    proof.serialize_compressed(&mut proof_bytes).unwrap();
+    proof
+        .serialize_compressed(&mut proof_bytes)
+        .map_err(|_| SmartMeterError::InvalidInput("Seriliazation Failure".to_string()))?;
 
     println!("\tProof generated successfully!");
     println!("\tProve time: {:.2?}", prove_end_time);
@@ -142,26 +212,29 @@ fn main() {
     THE VERIFIER'S RUN
     -----------------*/
     println!("\n[+] Verifier: Checking the proof against the Grid Policy...");
+
+    // The Public Input Check
+    if !C_Data_native.is_on_curve() || !C_Data_native.is_in_correct_subgroup_assuming_on_curve() {
+        println!("\t[!] ERROR: Incorrect commitment point! Commitment is not on the Jubjub curve.");
+        return Err(SmartMeterError::InvalidCurvePoint(
+            "Commitment Point is EITHER not a valid curve point OR not in correct subgroup"
+                .to_string(),
+        ));
+    }
+
     let pub_inputs = vec![C_Data_native.x, C_Data_native.y, Fr::from(threshold_data)];
 
-    let verify_res = Groth16::<Bls12_381>::verify(&vk_circuit, &pub_inputs, &proof);
+    let verify_res = Groth16::<Bls12_381>::verify(&vk_circuit, &pub_inputs, &proof)
+        .map_err(SmartMeterError::VerificationError)?;
     println!("\tNo data was revealed to the Grid.");
 
-    match verify_res {
-        Ok(true) => {
-            println!("\t[*] VERIFIED: Measurement is under the threshold.");
-            println!("==============================================");
-        }
-        Ok(false) => {
-            println!("\t[!] ERROR: Cryptographic Verification Failed! Proof is invalid or forged.");
-            println!("==============================================");
-        }
-        Err(err) => {
-            println!(
-                "Structural Failure. Bad Request format or length mismatch. Error: {}",
-                err
-            );
-        }
+    if verify_res {
+        println!("\t[*] VERIFIED: Measurement is under the threshold.");
+        println!("==============================================");
+    } else {
+        println!("\t[!] ERROR: Proof Verification Failed! Proof is EITHER invalid OR forged.");
+        println!("==============================================");
     }
+    Ok(())
     //=========================================================================================================================================================================
 }
