@@ -1,17 +1,13 @@
-## 📄 License
-
-MIT License. Feel free to fork, experiment, and submit PRs.
-
 # ⚡ zk-Smart-Meter: Privacy-Preserving Energy Grid Verification
 
 A production-simulated Zero-Knowledge proof protocol built in Rust using the Arkworks ecosystem. This system allows a Smart Meter to mathematically prove to an Energy Grid operator that its monthly power usage is below a policy threshold, **without ever revealing the actual energy consumption.**
 
 ## 🌍 Real-World Applications
 
-* **Privacy-Preserving Billing:** Prove energy consumption is under a specific tier threshold without revealing exact household behavioral data (preventing price discrimination or surveillance).
-* **Regulatory Compliance:** Allow industrial factories to prove compliance with carbon caps without exposing proprietary production metrics.
-* **Smart Grid Load Balancing:** Aggregate zero-knowledge proofs from thousands of meters to cryptographically verify grid demand without tracking individual users.
-* **Academic Reference:** An educational implementation of Groth16 SNARKs integrated with Jubjub Pedersen commitments.
+- **Privacy-Preserving Billing:** Prove energy consumption is under a specific tier threshold without revealing exact household behavioral data (preventing price discrimination or surveillance).
+- **Regulatory Compliance:** Allow industrial factories to prove compliance with carbon caps without exposing proprietary production metrics.
+- **Smart Grid Load Balancing:** Aggregate zero-knowledge proofs from thousands of meters to cryptographically verify grid demand without tracking individual users.
+- **Academic Reference:** An educational implementation of Groth16 SNARKs integrated with Jubjub Pedersen commitments.
 
 ---
 
@@ -27,6 +23,7 @@ cd zk-smart-meter
 # Build in release mode for optimal cryptographic performance
 cargo build --release
 ```
+
 ---
 
 ## 🧠 Protocol Architecture & Mathematics
@@ -71,6 +68,7 @@ The Verifier checks that $C_{data}$ is a valid Jubjub curve point and resides in
 ## 💻 Usage & Demos
 
 ### 1. Standard Execution
+
 Executes the standard Prover-to-Verifier pipeline.
 
 ```bash
@@ -78,6 +76,7 @@ cargo run --release
 ```
 
 ### 2. Security Demo: MITM Attack Simulation
+
 Wakes up a built-in network interceptor that dynamically flips a random byte in the serialized proof, demonstrating how the Groth16 pairing check mathematically rejects corrupted payloads.
 
 ```bash
@@ -109,6 +108,7 @@ cargo test -- --nocapture
 ```
 
 ### Test Coverage:
+
 - ✅ Honest meter passes
 - ✅ Fraudulent meter rejected
 - ✅ Boundary condition ($M = T$) correctly rejected
@@ -153,3 +153,7 @@ _Tested on AMD Ryzen 5 (8GB RAM, 6 Cores CPU)._
 - _Note: Production deployments should utilize L2 rollups (Arbitrum/Optimism) or proof batching to reduce verification costs to <$0.50._
 
 ---
+
+## 📄 License
+
+MIT License. Feel free to fork, experiment, and submit PRs.
