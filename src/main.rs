@@ -18,6 +18,7 @@ use crate::{circuit::ZKSmartMeterContract, native::initiate_native_calculation};
 
 mod circuit;
 mod native;
+mod tpm;
 //=========================================================================================================================================================================
 
 /*-------------------------
@@ -120,8 +121,17 @@ fn main() -> Result<(), SmartMeterError> {
     THE PRECOMPUTE OF PEDERSON COMMITMENT
     ------------------------------------*/
     println!("[+] Booting Smart Meter...");
-    let (g_native, h_native, f_native, C_Data_native, secret_pk, measurement, secret_r) =
-        initiate_native_calculation(measurement_data);
+    let (
+        g_native,
+        h_native,
+        f_native,
+        C_Data_native,
+        secret_pk,
+        measurement,
+        secret_r,
+        tpm_module_public_key,
+        tpm_measurement_signature,
+    ) = initiate_native_calculation(measurement_data);
     //=========================================================================================================================================================================
 
     /*----------------

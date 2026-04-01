@@ -7,14 +7,17 @@ use std::cmp::Ordering;
 #[allow(non_snake_case)]
 #[derive(Clone)]
 pub struct ZKSmartMeterContract {
-    pub g: EdwardsAffine,              // Generator for pk
-    pub h: EdwardsAffine,              // Generator for M
-    pub f: EdwardsAffine,              // Generator for r
-    pub C_data: Option<EdwardsAffine>, // Public Commitment of Power Used
-    pub T: Option<Fr>,                 // Threshold Value
-    pub pk: Option<Fr>,                // Private Key
-    pub M: Option<Fr>,                 // Measurement of Power Used
-    pub r: Option<Fr>,                 // Blinding Factor
+    pub g: EdwardsAffine,                    // Generator for pk
+    pub h: EdwardsAffine,                    // Generator for M
+    pub f: EdwardsAffine,                    // Generator for r
+    pub C_data: Option<EdwardsAffine>,       // Public Commitment of Power Used
+    pub T: Option<Fr>,                       // Threshold Value
+    pub pk: Option<Fr>,                      // Private Key
+    pub M: Option<Fr>,                       // Measurement of Power Used
+    pub r: Option<Fr>,                       // Blinding Factor
+    pub TPM_pk: Option<EdwardsAffine>,       // Public Key from TPM Module
+    pub TPM_sign_cmt: Option<EdwardsAffine>, // Measurement Schnorr Signature Commitment
+    pub TPM_sign_resp: Option<Fr>,           // Measurement Schnorr Signature Response
 }
 
 #[allow(non_snake_case)]
@@ -44,6 +47,15 @@ impl ConstraintSynthesizer<Fr> for ZKSmartMeterContract {
             self.r.ok_or(SynthesisError::AssignmentMissing)
         })?;
 
+        // Generate the Public (Inputs) and Private (Witness) variables for TPM Signature
+        let TPM_pk_var = EdwardsVar::new_constant(cs.clone(), self.TPM_pk.unwrap())?;
+        let TPM_sign_cmt_var = EdwardsVar::new_witness(cs.clone(), || {
+            self.TPM_sign_cmt.ok_or(SynthesisError::AssignmentMissing)
+        })?;
+        let TPM_sign_resp_var = FpVar::new_witness(cs.clone(), || {
+            self.TPM_sign_resp.ok_or(SynthesisError::AssignmentMissing)
+        })?;
+
         // Perform Multiplication (Adding Elliptic Curve Point [FpVar] times)
         let g_pk_var = g_var.scalar_mul_le(pk_var.to_bits_le()?.iter())?;
         let h_M_var = h_var.scalar_mul_le(M_var.to_bits_le()?.iter())?;
@@ -52,8 +64,17 @@ impl ConstraintSynthesizer<Fr> for ZKSmartMeterContract {
         // Perform Addition to get the final output value
         let final_c_data = g_pk_var + h_M_var + f_r_var;
 
+        // Compute the FS-Heuristic Challenge and Perform the Schnorr Verification
+        let chlng_var = &TPM_pk_var.x + &TPM_sign_cmt_var.x + &M_var;
+        let TPM_sign_resp_G = g_var.scalar_mul_le(TPM_sign_resp_var.to_bits_le()?.iter())?;
+        let TPM_pk_var_chlng = TPM_pk_var.scalar_mul_le(chlng_var.to_bits_le()?.iter())?;
+        let Schnorr_Ver_RHS = TPM_sign_cmt_var + TPM_pk_var_chlng;
+
         // Range Proof for M<T
         M_var.enforce_cmp(&T_var, Ordering::Less, false)?;
+
+        // Enforce the Signature Validity
+        TPM_sign_resp_G.enforce_equal(&Schnorr_Ver_RHS);
 
         // Final Equality Constraint of the R1CS Matrix
         final_c_data.enforce_equal(&C_Data)?;
@@ -63,6 +84,9 @@ impl ConstraintSynthesizer<Fr> for ZKSmartMeterContract {
 }
 //=========================================================================================================================================================================
 
+/*--------------------
+TESTS FOR THE CIRCUIT
+--------------------*/
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -3,6 +3,8 @@ use ark_ed_on_bls12_381::{EdwardsAffine, Fr};
 use ark_ff::UniformRand;
 use rand::rngs::OsRng;
 
+use crate::tpm::{SchnorrSignature, TPMChip};
+
 #[allow(non_snake_case)]
 pub fn initiate_native_calculation(
     measurement_data: u64,
@@ -14,6 +16,8 @@ pub fn initiate_native_calculation(
     Fr,
     Fr,
     Fr,
+    EdwardsAffine,
+    SchnorrSignature,
 ) {
     println!("[+] Generating local Pedersen Commitment (Hiding your data)...");
     let mut rnd = OsRng;
@@ -32,6 +36,11 @@ pub fn initiate_native_calculation(
     let C_Data_native =
         ((g_native * secret_pk) + (h_native * data) + (f_native * secret_r)).into_affine();
 
+    println!("[*] Booting the TPM Module...");
+    let tpm_module = TPMChip::boot_new();
+    println!("[*] TPM Module: Signing the measurement data...");
+    let tpm_sign = tpm_module.sign_measurement(data);
+
     (
         g_native,
         h_native,
@@ -40,5 +49,7 @@ pub fn initiate_native_calculation(
         secret_pk,
         data,
         secret_r,
+        tpm_module.public_key,
+        tpm_sign,
     )
 }
