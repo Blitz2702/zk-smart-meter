@@ -1,7 +1,7 @@
 use ark_bls12_381::Fr;
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ed_on_bls12_381::{EdwardsAffine, Fr as JFr};
-use ark_ff::PrimeField;
+use ark_ff::{BigInteger, PrimeField};
 use ark_std::UniformRand;
 use rand::rngs::OsRng;
 
@@ -83,7 +83,8 @@ impl TPMChip {
             .expect("Failed to cast measurement to BLS curve");
         let chlng_bls = cmt_rnd_num.x + public_key.x + m_bls;
 
-        JFr::from_bigint(chlng_bls.into_bigint())
-            .expect("Failed to cast challenge into JubJub curve")
+        let chlng_bls_bytes = chlng_bls.into_bigint().to_bytes_le();
+
+        JFr::from_le_bytes_mod_order(&chlng_bls_bytes)
     }
 }
