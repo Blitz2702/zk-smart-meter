@@ -48,7 +48,9 @@ impl ConstraintSynthesizer<Fr> for ZKSmartMeterContract {
         })?;
 
         // Generate the Public (Inputs) and Private (Witness) variables for TPM Signature
-        let TPM_pk_var = EdwardsVar::new_constant(cs.clone(), self.TPM_pk.unwrap())?;
+        let TPM_pk_var = EdwardsVar::new_input(cs.clone(), || {
+            self.TPM_pk.ok_or(SynthesisError::AssignmentMissing)
+        })?;
         let TPM_sign_cmt_var = EdwardsVar::new_witness(cs.clone(), || {
             self.TPM_sign_cmt.ok_or(SynthesisError::AssignmentMissing)
         })?;
@@ -74,7 +76,7 @@ impl ConstraintSynthesizer<Fr> for ZKSmartMeterContract {
         M_var.enforce_cmp(&T_var, Ordering::Less, false)?;
 
         // Enforce the Signature Validity
-        TPM_sign_resp_G.enforce_equal(&Schnorr_Ver_RHS);
+        TPM_sign_resp_G.enforce_equal(&Schnorr_Ver_RHS)?;
 
         // Final Equality Constraint of the R1CS Matrix
         final_c_data.enforce_equal(&C_Data)?;
@@ -100,11 +102,12 @@ mod tests {
 
     // Helper Fucntion to Build the Circuit
     fn build_test_circuit(measurement: u64, threshold: u64) -> ZKSmartMeterContract {
-        let (g, h, f, c_data, pk, m, r) = initiate_native_calculation(measurement);
+        let (g, h, f, c_data, pk, m, r, tpm_pk, tpm_s) = initiate_native_calculation(measurement);
 
         let pk_bls = Fr::from_bigint(pk.into_bigint()).unwrap();
         let m_bls = Fr::from_bigint(m.into_bigint()).unwrap();
         let r_bls = Fr::from_bigint(r.into_bigint()).unwrap();
+        let tpm_s_resp_bls = Fr::from_bigint(tpm_s.Response.into_bigint()).unwrap();
 
         ZKSmartMeterContract {
             g,
@@ -115,6 +118,9 @@ mod tests {
             pk: Some(pk_bls),
             M: Some(m_bls),
             r: Some(r_bls),
+            TPM_pk: Some(tpm_pk),
+            TPM_sign_cmt: Some(tpm_s.Commitment),
+            TPM_sign_resp: Some(tpm_s_resp_bls),
         }
     }
 
@@ -243,6 +249,8 @@ mod tests {
             master_circuit.C_data.unwrap().x,
             master_circuit.C_data.unwrap().y,
             master_circuit.T.unwrap(),
+            master_circuit.TPM_pk.unwrap().x,
+            master_circuit.TPM_pk.unwrap().y,
         ];
 
         let is_valid = Groth16::<Bls12_381>::verify(&vk, &pub_inp, &des_proof).unwrap();
