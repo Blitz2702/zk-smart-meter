@@ -82,6 +82,9 @@ fn build_circuit(
     pk: Fr,
     M: Fr,
     r: Fr,
+    tpm_pk: EdwardsAffine,
+    tpm_s_cmt: EdwardsAffine,
+    tpm_s_resp: Fr,
 ) -> ZKSmartMeterContract {
     ZKSmartMeterContract {
         g,
@@ -92,6 +95,9 @@ fn build_circuit(
         pk: Some(pk),
         M: Some(M),
         r: Some(r),
+        TPM_pk: Some(tpm_pk),
+        TPM_sign_cmt: Some(tpm_s_cmt),
+        TPM_sign_resp: Some(tpm_s_resp),
     }
 }
 
@@ -147,6 +153,9 @@ fn main() -> Result<(), SmartMeterError> {
         pk: None,
         M: None,
         r: None,
+        TPM_pk: None,
+        TPM_sign_cmt: None,
+        TPM_sign_resp: None,
     };
 
     let (pk_circuit, vk_circuit) =
@@ -170,6 +179,10 @@ fn main() -> Result<(), SmartMeterError> {
     let secret_r_bls = Fr::from_bigint(r_bytes)
         .ok_or_else(|| SmartMeterError::InvalidInput("Invalid Blinder (r)".to_string()))?;
 
+    let tpm_sign_resp_bytes = tpm_measurement_signature.Response.into_bigint();
+    let tpm_dign_resp_bls = Fr::from_bigint(tpm_sign_resp_bytes)
+        .ok_or_else(|| SmartMeterError::InvalidInput("Invalid Signature Response".to_string()))?;
+
     let valid_circuit = build_circuit(
         g_native,
         h_native,
@@ -179,6 +192,9 @@ fn main() -> Result<(), SmartMeterError> {
         secret_pk_bls,
         measurement_bls,
         secret_r_bls,
+        tpm_module_public_key,
+        tpm_measurement_signature.Commitment,
+        tpm_dign_resp_bls,
     );
     let debug_circuit = build_circuit(
         g_native,
@@ -189,6 +205,9 @@ fn main() -> Result<(), SmartMeterError> {
         secret_pk_bls,
         measurement_bls,
         secret_r_bls,
+        tpm_module_public_key,
+        tpm_measurement_signature.Commitment,
+        tpm_dign_resp_bls,
     );
 
     // Pre Proof Computation Constraint Sanity Check
@@ -269,7 +288,13 @@ fn main() -> Result<(), SmartMeterError> {
         let proof_check_start_tampered = Instant::now();
         match tampered_proof_result {
             Ok(tampered_proof) => {
-                let pub_inputs = vec![C_Data_native.x, C_Data_native.y, Fr::from(threshold_data)];
+                let pub_inputs = vec![
+                    C_Data_native.x,
+                    C_Data_native.y,
+                    Fr::from(threshold_data),
+                    tpm_module_public_key.x,
+                    tpm_module_public_key.y,
+                ];
 
                 let is_valid =
                     Groth16::<Bls12_381>::verify(&vk_circuit, &pub_inputs, &tampered_proof)
@@ -312,7 +337,13 @@ fn main() -> Result<(), SmartMeterError> {
         ));
     }
 
-    let pub_inputs = vec![C_Data_native.x, C_Data_native.y, Fr::from(threshold_data)];
+    let pub_inputs = vec![
+        C_Data_native.x,
+        C_Data_native.y,
+        Fr::from(threshold_data),
+        tpm_module_public_key.x,
+        tpm_module_public_key.y,
+    ];
 
     let deserialized_proof = Proof::<Bls12_381>::deserialize_compressed(&received_proof_bytes[..])
         .map_err(|_| SmartMeterError::DeserializationError("Proof bytes corrupted".to_string()))?;
