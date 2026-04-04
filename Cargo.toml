@@ -9,6 +9,9 @@ ark-ff = "0.4.0"
 ark-ec = "0.4.0"
 ark-std = "0.4.0"
 
+# Cryptographic Primitives
+ark-crypto-primitives = { version = "0.4.0", features = ["sponge", "r1cs"] }
+
 # The specific curve we are using
 ark-bls12-381 = "0.4.0"
 
@@ -23,6 +26,9 @@ ark-snark = "0.4.0"
 # Randomness
 rand = "0.8"
 
-#Embedded curve (Jubjub)
+# Embedded curve (Jubjub)
 ark-ed-on-bls12-381 = {version = "0.4.0", features = ["r1cs"]}
 ark-serialize = "0.4.0"
+
+# Hashing Algorithm
+sha2 = "0.10"
