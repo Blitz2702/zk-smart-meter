@@ -14,6 +14,7 @@ use std::fmt::Display;
 use std::io::{Write, stdin, stdout};
 use std::time::Instant;
 
+use crate::tpm::TPMChip;
 use crate::{circuit::ZKSmartMeterContract, native::initiate_native_calculation};
 
 mod circuit;
@@ -108,6 +109,7 @@ fn build_circuit(
 fn main() -> Result<(), SmartMeterError> {
     let args: Vec<String> = env::args().collect();
     let mitm_demo_run = args.contains(&String::from("--attack-demo"));
+    let fake_tpm_pk_run = args.contains(&String::from("--fake-pk-demo"));
     /*--------------------------------
     CLI COSMETICS FOR USER EXPERIENCE
     --------------------------------*/
@@ -320,22 +322,44 @@ fn main() -> Result<(), SmartMeterError> {
         );
         println!("\n----------------------------------------------");
     } else {
-        println!("[#] Run with --attack-demo to simulate a MITM tampering attack");
+        println!("\n[#] Run with --attack-demo to simulate a MITM tampering attack");
     }
     //=========================================================================================================================================================================
 
     /*-----------------
     THE VERIFIER'S RUN
     -----------------*/
+    let neighbour_TPM_1 = TPMChip::boot_new();
+    let neighbour_TPM_2 = TPMChip::boot_new();
+
+    let Verifier_Trusted_HW_Registry = vec![
+        neighbour_TPM_1.public_key,
+        neighbour_TPM_2.public_key,
+        tpm_module_public_key,
+    ];
+
     println!("\n[+] Verifier: Checking the proof received against the Grid Policy...");
 
-    // Create a trusted TPM Hardware registry and Check the TPM Public Key
-    let trusted_tmp_hw_registry = vec![tpm_module_public_key];
-    if !trusted_tmp_hw_registry.contains(&tpm_module_public_key) {
-        println!("\t[!] ERROR: Untrusted Hardware! TPM Public Key is not registered.");
+    //  DETERMINE THE SUBMITTED IDENTITY
+    let mut submitted_TPM_pk = tpm_module_public_key;
+
+    if fake_tpm_pk_run {
+        println!("\n--------FAKE-TPM-PUBLIC-KEY--SIMULATION-------");
+        println!("\t[!] Attacker: INJECTING ROGUE HARDWARE: A malicious user swapped their TPM...");
+        let rogue_tpm = TPMChip::boot_new();
+        submitted_TPM_pk = rogue_tpm.public_key;
+    }
+
+    // VALIDATE THE SUBMITTED IDENTITY - THE IDENTITY BINDING CHECK
+    if !Verifier_Trusted_HW_Registry.contains(&submitted_TPM_pk) {
+        println!(
+            "\t[!] REJECTED: Untrusted Hardware! The submitted TPM Public Key is NOT in the Grid PKI."
+        );
         return Err(SmartMeterError::InvalidInput(
             "Untrusted TPM Identity".to_string(),
         ));
+    } else {
+        println!("\n[#] Run with '--fake-pk-demo' to simulate a Rogue TPM attack\n");
     }
 
     let received_proof_bytes = proof_bytes;
