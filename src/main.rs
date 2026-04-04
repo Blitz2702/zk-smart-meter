@@ -18,6 +18,7 @@ use crate::{circuit::ZKSmartMeterContract, native::initiate_native_calculation};
 
 mod circuit;
 mod native;
+mod poseidon_setup;
 mod tpm;
 //=========================================================================================================================================================================
 
@@ -327,6 +328,16 @@ fn main() -> Result<(), SmartMeterError> {
     THE VERIFIER'S RUN
     -----------------*/
     println!("\n[+] Verifier: Checking the proof received against the Grid Policy...");
+
+    // Create a trusted TPM Hardware registry and Check the TPM Public Key
+    let trusted_tmp_hw_registry = vec![tpm_module_public_key];
+    if !trusted_tmp_hw_registry.contains(&tpm_module_public_key) {
+        println!("\t[!] ERROR: Untrusted Hardware! TPM Public Key is not registered.");
+        return Err(SmartMeterError::InvalidInput(
+            "Untrusted TPM Identity".to_string(),
+        ));
+    }
+
     let received_proof_bytes = proof_bytes;
     // The Public Input Check
     if !C_Data_native.is_on_curve() || !C_Data_native.is_in_correct_subgroup_assuming_on_curve() {

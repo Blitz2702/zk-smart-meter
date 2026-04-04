@@ -1,8 +1,13 @@
 use ark_bls12_381::Fr;
+use ark_crypto_primitives::sponge::{
+    constraints::CryptographicSpongeVar, poseidon::constraints::PoseidonSpongeVar,
+};
 use ark_ed_on_bls12_381::{EdwardsAffine, constraints::EdwardsVar};
 use ark_r1cs_std::{fields::fp::FpVar, prelude::*};
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, Result, SynthesisError};
 use std::cmp::Ordering;
+
+use crate::poseidon_setup::get_poseidon_config;
 
 #[allow(non_snake_case)]
 #[derive(Clone)]
@@ -66,8 +71,18 @@ impl ConstraintSynthesizer<Fr> for ZKSmartMeterContract {
         // Perform Addition to get the final output value
         let final_c_data = g_pk_var + h_M_var + f_r_var;
 
-        // Compute the FS-Heuristic Challenge and Perform the Schnorr Verification
-        let chlng_var = &TPM_pk_var.x + &TPM_sign_cmt_var.x + &M_var;
+        // Compute the FS-Heuristic Challenge
+        let config = get_poseidon_config();
+        let mut sponge_var = PoseidonSpongeVar::<Fr>::new(cs.clone(), &config);
+        sponge_var.absorb(&TPM_sign_cmt_var.x)?;
+        sponge_var.absorb(&TPM_sign_cmt_var.y)?;
+        sponge_var.absorb(&TPM_pk_var.x)?;
+        sponge_var.absorb(&TPM_pk_var.y)?;
+        sponge_var.absorb(&M_var)?;
+
+        let chlng_var = sponge_var.squeeze_field_elements(1)?.pop().unwrap();
+
+        // Perform the Schnorr Verification
         let TPM_sign_resp_G = g_var.scalar_mul_le(TPM_sign_resp_var.to_bits_le()?.iter())?;
         let TPM_pk_var_chlng = TPM_pk_var.scalar_mul_le(chlng_var.to_bits_le()?.iter())?;
         let Schnorr_Ver_RHS = TPM_sign_cmt_var + TPM_pk_var_chlng;

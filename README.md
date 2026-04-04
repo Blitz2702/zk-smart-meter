@@ -55,6 +55,22 @@ The Verifier checks that $C_{data}$ is a valid Jubjub curve point and resides in
 
 ---
 
+## 🛡️ Architecture Note: The Attestation Binding Layer
+
+This protocol implements an **Attestation Binding Layer** that mimics the cryptographic structure of real-world Trusted Execution Environments (TEEs) and TPM quotes.
+
+| Primitive      | Native Implementation | In-Circuit Constraint     | Security Guarantee           |
+| :------------- | :-------------------- | :------------------------ | :--------------------------- |
+| **Challenge**  | `PoseidonSponge`      | `PoseidonSpongeVar`       | 128-bit Collision Resistance |
+| **Nonce**      | `SHA256(sk \| M)`     | _N/A (Computed Natively)_ | RFC-6979 Deterministic       |
+| **Commitment** | 3-Generator Pedersen  | EC Scalar Multiplication  | Computationally Binding      |
+
+- **Deterministic Nonces:** Uses RFC-6979 style hashing to eliminate RNG-failure vulnerabilities (preventing nonce-reuse private key extraction).
+- **Cryptographic Challenge:** Implements the `ark-crypto-primitives` Poseidon Sponge directly inside the R1CS matrix to ensure the signature challenge cannot be algebraically inverted or forged.
+- **Identity Binding:** The Verifier strictly evaluates the submitted hardware public key against a simulated off-chain Public Key Infrastructure (PKI) registry before evaluating the SNARK.
+
+---
+
 ## 🚀 Key Features
 
 - **Network Serialization:** Full serialization/deserialization pipeline simulating an API transit layer.
